@@ -1,0 +1,8 @@
+{
+  "name": "EyeTrack Assist",
+  "description": "A high-fidelity webcam eye-tracking interface demo featuring dwell-clicking, voice control, and AI-enhanced calibration visualization.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "EyeTrack Assist",
+  "version": "1.0",
+  "description": "Webcam eye-tracking accessibility tool enabling hands-free navigation.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "index.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'unsafe-inline'; object-src 'self'"
+  }
+}
