@@ -17,7 +17,9 @@ import {
   AlertTriangle,
   RefreshCw,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  FileCode,
+  X
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { GlassCard } from './components/ui/GlassCard';
@@ -96,6 +98,7 @@ export default function App() {
   // Advanced Features State
   const [scrollAction, setScrollAction] = useState<'up' | 'down' | null>(null);
   const [precisionMode, setPrecisionMode] = useState(false);
+  const [isVideoExpanded, setIsVideoExpanded] = useState(false);
 
   // New Auto-Calibration State
   const [calibState, setCalibState] = useState<'idle' | 'running' | 'completed'>('idle');
@@ -122,15 +125,19 @@ export default function App() {
           return;
       }
       
-      await eyeTrackingService.init();
-      eyeTrackingService.setGazeListener((x, y) => {
-        // Only update UI if tracking is explicitly enabled AND we aren't calibrating
-        // Access calibState from state directly works here as this listener is permanent
-        if (settings.isTrackingEnabled) {
-            setGaze({ x, y });
-            handleSmartFeatures(x, y);
-        }
-      });
+      try {
+        await eyeTrackingService.init();
+        eyeTrackingService.setGazeListener((x, y) => {
+          // Only update UI if tracking is explicitly enabled AND we aren't calibrating
+          // Access calibState from state directly works here as this listener is permanent
+          if (settings.isTrackingEnabled) {
+              setGaze({ x, y });
+              handleSmartFeatures(x, y);
+          }
+        });
+      } catch (e) {
+        setToast({ msg: "Failed to start tracking. Check console.", type: "error" });
+      }
     };
     initTracking();
 
@@ -196,6 +203,19 @@ export default function App() {
         const cmd = transcript.toLowerCase();
         console.log('Processed Command:', cmd);
         
+        // Calibration Interrupt
+        if (document.body.getAttribute('data-calibrating') === 'true') {
+           if (cmd.includes('stop') || cmd.includes('cancel')) {
+             setCalibState('idle');
+             document.body.removeAttribute('data-calibrating');
+             eyeTrackingService.pause();
+             const synth = window.speechSynthesis;
+             const utter = new SpeechSynthesisUtterance("Calibration cancelled");
+             synth.speak(utter);
+           }
+           return; // Ignore other commands during calibration
+        }
+        
         let feedback = "";
         const currentView = viewRef.current;
         const currentPrecision = precisionModeRef.current;
@@ -239,9 +259,27 @@ export default function App() {
         // CLICK COMMAND
         else if (cmd.includes('click') || cmd.includes('select')) {
             const currentGaze = gazeRef.current;
-            const el = document.elementFromPoint(currentGaze.x, currentGaze.y) as HTMLElement;
+            const el = document.elementFromPoint(currentGaze.x, currentGaze.y);
             if (el) {
-                el.click();
+                // Robust click simulation for all Element types (including SVG)
+                // We use dispatchEvent to ensure it works even if .click() is missing on the element prototype
+                const clickEvent = new MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: currentGaze.x,
+                    clientY: currentGaze.y
+                });
+                el.dispatchEvent(clickEvent);
+                
+                // For HTML elements (inputs, buttons), focus them and try native click if dispatch didn't trigger
+                if (el instanceof HTMLElement) {
+                    el.focus();
+                    if (typeof el.click === 'function') {
+                        try { el.click(); } catch(e) { console.warn('Native click failed', e); }
+                    }
+                }
+                
                 feedback = "Clicked";
                 // Visual ripple
                 const ripple = document.createElement('div');
@@ -307,6 +345,9 @@ export default function App() {
   ];
 
   const startAutoCalibration = () => {
+    // Stop voice to ensure silence during calibration
+    voiceService.setIgnoreInput(true);
+    
     eyeTrackingService.clearCalibration();
     eyeTrackingService.resume(); 
     setSettings(s => ({ ...s, isTrackingEnabled: true })); 
@@ -353,6 +394,10 @@ export default function App() {
         } else {
             setCalibState('completed');
             setCalibProgress(100);
+            
+            // Re-enable voice
+            voiceService.setIgnoreInput(false);
+            
             setToast({ msg: "Calibration Successful!", type: "success" });
             const synth = window.speechSynthesis;
             const utter = new SpeechSynthesisUtterance("Calibration complete");
@@ -372,17 +417,23 @@ export default function App() {
   };
 
   const handleDownloadManifest = () => {
+      // Updated Manifest for Sandbox architecture
       const manifest = {
         "manifest_version": 3,
         "name": "EyeTrack Assist",
-        "version": "1.0",
+        "version": "1.1",
         "description": "Webcam eye-tracking accessibility tool.",
         "permissions": ["activeTab", "scripting", "storage"],
         "action": {
-          "default_popup": "index.html"
+          "default_popup": "wrapper.html",
+          "default_title": "EyeTrack Assist"
+        },
+        "sandbox": {
+            "pages": ["index.html"]
         },
         "content_security_policy": {
-          "extension_pages": "script-src 'self'; object-src 'self'"
+          "extension_pages": "script-src 'self'; object-src 'self'",
+          "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals allow-same-origin; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://webgazer.cs.brown.edu https://cdn.tailwindcss.com https://aistudiocdn.com; child-src 'self';"
         }
       };
       
@@ -393,7 +444,32 @@ export default function App() {
       link.download = "manifest.json";
       link.click();
       URL.revokeObjectURL(url);
-      setToast({ msg: "manifest.json downloaded!", type: "success" });
+      setToast({ msg: "Manifest downloaded. Don't forget wrapper.html!", type: "success" });
+  };
+
+  const handleDownloadWrapper = () => {
+      const content = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>EyeTrack Assist Wrapper</title>
+    <style>
+      body, html { margin: 0; padding: 0; width: 800px; height: 600px; overflow: hidden; background: #0A0A0A; }
+      iframe { width: 100%; height: 100%; border: none; display: block; }
+    </style>
+  </head>
+  <body>
+    <iframe src="index.html" allow="camera; microphone"></iframe>
+  </body>
+</html>`;
+      const blob = new Blob([content], {type: "text/html"});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = "wrapper.html";
+      link.click();
+      URL.revokeObjectURL(url);
+      setToast({ msg: "Wrapper.html downloaded!", type: "success" });
   };
 
   const renderDashboard = () => (
@@ -658,31 +734,40 @@ export default function App() {
 
             <GlassCard>
                 <h3 className="font-semibold mb-6 flex items-center gap-2">
-                    <Zap size={18} className="text-accent"/> Chrome Extension
+                    <Zap size={18} className="text-accent"/> Chrome Extension Setup
                 </h3>
                 
                 <div className="space-y-4">
                      <p className="text-sm text-gray-400">
-                        To use EyeTrack Assist on other websites, you must install it as a Chrome Extension.
+                        To run this with WebGazer (AI), we use a sandbox architecture. You need both files.
                      </p>
                      
+                     <div className="flex gap-2">
+                         <button 
+                            onClick={handleDownloadManifest}
+                            className="flex-1 py-3 bg-surface hover:bg-white/10 border border-white/20 rounded-xl font-medium text-white flex items-center justify-center gap-2 transition-all text-sm"
+                         >
+                            <Download size={16} />
+                            1. Manifest
+                         </button>
+                         <button 
+                            onClick={handleDownloadWrapper}
+                            className="flex-1 py-3 bg-surface hover:bg-white/10 border border-white/20 rounded-xl font-medium text-white flex items-center justify-center gap-2 transition-all text-sm"
+                         >
+                            <FileCode size={16} />
+                            2. Wrapper
+                         </button>
+                     </div>
+
                      <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-                        <h4 className="font-semibold mb-2 text-white">Installation Steps:</h4>
+                        <h4 className="font-semibold mb-2 text-white">Install Instructions:</h4>
                         <ol className="list-decimal list-inside text-xs text-gray-400 space-y-1">
-                            <li>Click "Download Manifest" below.</li>
+                            <li>Download both files above.</li>
+                            <li>Place them in your build folder (with index.html).</li>
                             <li>Open <code className="bg-black px-1 rounded">chrome://extensions</code></li>
-                            <li>Enable "Developer Mode" (top right).</li>
-                            <li>Click "Load Unpacked" and select the folder.</li>
+                            <li>"Load Unpacked" -> Select folder.</li>
                         </ol>
                      </div>
-                     
-                     <button 
-                        onClick={handleDownloadManifest}
-                        className="w-full py-3 bg-surface hover:bg-white/10 border border-white/20 rounded-xl font-medium text-white flex items-center justify-center gap-2 transition-all"
-                     >
-                        <Download size={18} />
-                        Download Manifest
-                     </button>
                 </div>
             </GlassCard>
             
@@ -707,6 +792,52 @@ export default function App() {
     <div className="min-h-screen bg-background text-white selection:bg-primary/30 flex relative overflow-hidden font-sans">
       
       {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+
+      {/* Expanded Video Modal */}
+      {isVideoExpanded && (
+        <div className="fixed inset-0 z-[10000] bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in duration-300 backdrop-blur-sm">
+             <div className="absolute top-4 right-4 z-50">
+                 <button 
+                    onClick={() => setIsVideoExpanded(false)}
+                    className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+                 >
+                    <X size={32} />
+                 </button>
+             </div>
+
+             <h2 className="text-white text-2xl font-bold mb-4">Camera Check</h2>
+             <p className="text-gray-400 mb-6 text-center max-w-lg">
+                Ensure your face is well-lit and centered in the guides below. 
+                Avoid bright windows behind you.
+             </p>
+
+             <div className="relative w-full max-w-5xl aspect-video bg-black rounded-3xl overflow-hidden border border-white/10 shadow-2xl ring-1 ring-white/20">
+                <CameraFeed isActive={settings.isTrackingEnabled} isHighRes={true} />
+
+                 {/* Face Guide Overlay */}
+                <div className="absolute inset-0 pointer-events-none opacity-40 flex items-center justify-center">
+                    <svg viewBox="0 0 200 200" className="w-1/2 h-1/2 stroke-white stroke-[0.5] fill-none dashed drop-shadow-md">
+                         <ellipse cx="100" cy="100" rx="40" ry="55" strokeDasharray="4" />
+                         <line x1="100" y1="45" x2="100" y2="155" strokeDasharray="4" />
+                         <line x1="60" y1="90" x2="140" y2="90" strokeDasharray="4" />
+                    </svg>
+                </div>
+             </div>
+
+             <div className="mt-8 flex gap-4">
+                 <button
+                    onClick={() => {
+                        setIsVideoExpanded(false);
+                        setView('calibration');
+                    }}
+                    className="px-6 py-3 bg-primary hover:bg-blue-600 rounded-full font-semibold flex items-center gap-2 transition-colors"
+                 >
+                    <Crosshair size={20} />
+                    Go to Calibration
+                 </button>
+             </div>
+        </div>
+      )}
 
       <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-900/20 rounded-full blur-[120px]" />
@@ -763,7 +894,10 @@ export default function App() {
         </div>
 
         <div className="p-4 border-t border-white/5">
-             <div className="rounded-xl overflow-hidden aspect-video bg-black relative shadow-inner ring-1 ring-white/10 group cursor-pointer hover:ring-primary/50 transition-all">
+             <div 
+                onClick={() => setIsVideoExpanded(true)}
+                className="rounded-xl overflow-hidden aspect-video bg-black relative shadow-inner ring-1 ring-white/10 group cursor-pointer hover:ring-primary/50 transition-all"
+             >
                 <CameraFeed isActive={settings.isTrackingEnabled} /> 
                 <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                     <Maximize2 size={20} />

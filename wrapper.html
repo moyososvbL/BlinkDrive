@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>EyeTrack Assist Wrapper</title>
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        width: 800px; /* Standard comfortable popup width */
+        height: 600px;
+        overflow: hidden;
+        background: #0A0A0A;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 
+      We load index.html (the React App) inside this iframe.
+      manifest.json marks 'index.html' as sandboxed, allowing WebGazer/Tailwind CDNs to load.
+    -->
+    <iframe src="index.html" allow="camera; microphone"></iframe>
+  </body>
+</html>

@@ -40,11 +40,16 @@ class EyeTrackingService {
 
         this.initialized = true;
         console.log("WebGazer Initialized");
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to initialize WebGazer", e);
+        if (e.message && e.message.includes('fetch')) {
+            throw new Error("WebGazer failed to download model weights. If using as an extension, ensure manifest.json allows external connections.");
+        }
+        throw e;
       }
     } else {
       console.warn("WebGazer script not loaded");
+      throw new Error("WebGazer script is missing or blocked. If you are running this as an Extension, ensure 'webgazer.cs.brown.edu' is allowed in manifest.json CSP.");
     }
   }
 
